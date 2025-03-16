@@ -11,27 +11,22 @@ from dotenv import load_dotenv
 from keyboards import main_menu, back_menu, confirm_menu
 from db import load_db, save_db, update_stock
 
-# Загружаем переменные окружения
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 USER_ID = int(os.getenv('USER_ID'))
 
-# Определяем состояния для ConversationHandler
 (
     ADD_NAME, ADD_FREQUENCY, ADD_TIME, ADD_STOCK, ADD_WARNING,
     DELETE_MED, EDIT_MED, EDIT_FIELD, EDIT_STOCK, EDIT_TIME,
-    EDIT_NAME_VALUE,  # Новое состояние для ввода нового названия
-    EDIT_ADD_STOCK  # Новое состояние для добавления количества лекарства
+    EDIT_NAME_VALUE,
+    EDIT_ADD_STOCK
 ) = range(12)
 
-# Часовой пояс Москвы
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
-# Хранилище временных данных для добавления лекарства
 user_data = {}
 
 
-# Проверка, что пользователь — тот, кто указан в USER_ID
 def restrict_access(update: Update, context):
     if update.effective_user.id != USER_ID:
         update.message.reply_text("Доступ запрещён. Вы не авторизованы для использования этого бота.")
@@ -39,7 +34,6 @@ def restrict_access(update: Update, context):
     return True
 
 
-# Функция для проверки формата времени
 def validate_time(time_str):
     try:
         datetime.strptime(time_str, '%H:%M')
@@ -48,22 +42,20 @@ def validate_time(time_str):
         return False
 
 
-# Обработчик для кнопок "Назад" и "В главное меню"
 async def handle_navigation(update: Update, context):
     text = update.message.text
-    current_state = context.user_data.get('current_state')  # Текущее состояние диалога
-    print(f"Received text: {text}, Current state: {current_state}")  # Отладочный вывод
+    current_state = context.user_data.get('current_state')
+    print(f"Handling navigation - Received text: '{text}', Current state: {current_state}")
 
-    if text == "В главное меню":
+    if text in ["В главное меню", "в главное меню"]:
         print("Navigating to main menu")
         await update.message.reply_text("Возвращаемся в главное меню.", reply_markup=main_menu())
-        user_data.clear()  # Очищаем временные данные
-        context.user_data.clear()  # Очищаем данные контекста
+        user_data.clear()
+        context.user_data.clear()
         return ConversationHandler.END
 
-    elif text == "Назад":
+    elif text in ["Назад", "назад"]:
         print("Processing 'Назад' command")
-        # Определяем, куда возвращаться в зависимости от текущего состояния
         if current_state == ADD_NAME:
             print("Returning from ADD_NAME to main menu")
             await update.message.reply_text("Возвращаемся в главное меню.", reply_markup=main_menu())
@@ -76,7 +68,7 @@ async def handle_navigation(update: Update, context):
         elif current_state == ADD_TIME:
             print("Returning from ADD_TIME to ADD_FREQUENCY")
             await update.message.reply_text("Введите количество приёмов в день (цифрой):", reply_markup=back_menu())
-            user_data['times'] = []  # Очищаем введённое время
+            user_data['times'] = []
             user_data['time_index'] = 0
             return ADD_FREQUENCY
         elif current_state == ADD_STOCK:
@@ -85,7 +77,7 @@ async def handle_navigation(update: Update, context):
                 f"Введите время {user_data['time_index'] + 1}-го приёма (в формате ЧЧ:ММ):",
                 reply_markup=back_menu()
             )
-            user_data['times'].pop()  # Удаляем последнее введённое время
+            user_data['times'].pop()
             user_data['time_index'] -= 1
             return ADD_TIME
         elif current_state == ADD_WARNING:
@@ -101,15 +93,23 @@ async def handle_navigation(update: Update, context):
             await update.message.reply_text("Нет предыдущего шага, возвращаемся в главное меню.",
                                             reply_markup=main_menu())
             user_data.clear()
+            context.user_data.clear()
             return ConversationHandler.END
         elif current_state == EDIT_FIELD:
             print("Returning from EDIT_FIELD to EDIT_MED")
             db = load_db()
+            if not db['medicines']:
+                await update.message.reply_text("Список лекарств пуст.", reply_markup=main_menu())
+                user_data.clear()
+                context.user_data.clear()
+                return ConversationHandler.END
             keyboard = [[med['name']] for med in db['medicines']]
             await update.message.reply_text(
                 "Выберите лекарство для изменения:",
                 reply_markup=back_menu(keyboard)
             )
+            context.user_data['current_state'] = EDIT_MED
+            print(f"Switched to state EDIT_MED, current_state: {context.user_data['current_state']}")
             return EDIT_MED
         elif current_state == EDIT_NAME_VALUE:
             print("Returning from EDIT_NAME_VALUE to EDIT_FIELD")
@@ -121,7 +121,12 @@ async def handle_navigation(update: Update, context):
                 # ['Порог предупреждения'],
                 ['Добавить']
             ]
-            await update.message.reply_text("Выберите, что изменить:", reply_markup=back_menu(keyboard))
+            await update.message.reply_text(
+                "Выберите, что изменить:",
+                reply_markup=back_menu(keyboard)
+            )
+            context.user_data['current_state'] = EDIT_FIELD
+            print(f"Switched to state EDIT_FIELD, current_state: {context.user_data['current_state']}")
             return EDIT_FIELD
         elif current_state == EDIT_TIME:
             print("Returning from EDIT_TIME to EDIT_FIELD")
@@ -134,8 +139,8 @@ async def handle_navigation(update: Update, context):
                 ['Добавить']
             ]
             await update.message.reply_text("Выберите, что изменить:", reply_markup=back_menu(keyboard))
-            user_data['times'] = []  # Очищаем введённое время
-            user_data['time_index'] = 0
+            context.user_data['current_state'] = EDIT_FIELD
+            print(f"Switched to state EDIT_FIELD, current_state: {context.user_data['current_state']}")
             return EDIT_FIELD
         elif current_state == EDIT_STOCK:
             print("Returning from EDIT_STOCK to EDIT_FIELD")
@@ -148,6 +153,8 @@ async def handle_navigation(update: Update, context):
                 ['Добавить']
             ]
             await update.message.reply_text("Выберите, что изменить:", reply_markup=back_menu(keyboard))
+            context.user_data['current_state'] = EDIT_FIELD
+            print(f"Switched to state EDIT_FIELD, current_state: {context.user_data['current_state']}")
             return EDIT_FIELD
         elif current_state == EDIT_ADD_STOCK:
             print("Returning from EDIT_ADD_STOCK to EDIT_FIELD")
@@ -160,7 +167,11 @@ async def handle_navigation(update: Update, context):
                 ['Добавить']
             ]
             await update.message.reply_text("Выберите, что изменить:", reply_markup=back_menu(keyboard))
+            context.user_data['current_state'] = EDIT_FIELD
+            print(f"Switched to state EDIT_FIELD, current_state: {context.user_data['current_state']}")
             return EDIT_FIELD
+    else:
+        print(f"Navigation not handled for text: '{text}', Current state: {current_state}")
     return None
 
 
@@ -273,18 +284,17 @@ async def add_warning(update: Update, context):
         if warning < 0:
             raise ValueError
         user_data['warning'] = warning
-        # Сохраняем лекарство в базу
         db = load_db()
         db['medicines'].append({
             'name': user_data['name'],
-            'dose': 1,  # Пока фиксировано 1 таблетка за приём
+            'dose': 1,
             'frequency': user_data['frequency'],
             'times': user_data['times'],
             'stock': user_data['stock'],
             'warning': user_data['warning']
         })
         save_db(db)
-        # Планируем уведомления
+
         schedule_notifications(context.job_queue, user_data['name'], user_data['times'])
         await update.message.reply_text(
             "Лекарство успешно добавлено!",
@@ -341,7 +351,6 @@ async def delete_medicine_confirm(update: Update, context):
     db = load_db()
     db['medicines'] = [med for med in db['medicines'] if med['name'] != med_name]
     save_db(db)
-    # Удаляем уведомления
     for job in context.job_queue.jobs():
         if med_name in job.name:
             job.schedule_removal()
@@ -400,8 +409,8 @@ async def edit_field(update: Update, context):
             "Введите новое название:",
             reply_markup=back_menu()
         )
-        context.user_data['current_state'] = EDIT_NAME_VALUE  # Переходим в новое состояние
-        print(f"Entered state EDIT_NAME_VALUE, current_state: {context.user_data['current_state']}")  # Отладка
+        context.user_data['current_state'] = EDIT_NAME_VALUE
+        print(f"Entered state EDIT_NAME_VALUE, current_state: {context.user_data['current_state']}")
         return EDIT_NAME_VALUE
     elif field == "Частота":
         await update.message.reply_text(
@@ -468,9 +477,9 @@ async def edit_name_value(update: Update, context):
                 reply_markup=main_menu()
             )
             break
-    print(f"After update - Medicines in DB: {db['medicines']}")  # Отладка: база после изменений
-    save_db(db)  # Сохраняем изменения в базе данных
-    print("Saved DB after update")  # Отладка: подтверждение сохранения
+    print(f"After update - Medicines in DB: {db['medicines']}")
+    save_db(db)
+    print("Saved DB after update")
     user_data.clear()
     context.user_data.clear()
     return ConversationHandler.END
@@ -479,14 +488,14 @@ async def edit_name_value(update: Update, context):
 async def edit_field_value(update: Update, context):
     field = user_data['field']
     value = update.message.text
-    print(f"Updating field: {field}, New value: {value}, Medicine: {user_data['med_name']}")  # Отладка
+    print(f"Updating field: {field}, New value: {value}, Medicine: {user_data['med_name']}")
     db = load_db()
-    print(f"Before update - Medicines in DB: {db['medicines']}")  # Отладка: база до изменений
+    print(f"Before update - Medicines in DB: {db['medicines']}")
     for med in db['medicines']:
         if med['name'] == user_data['med_name']:
             if field == "Частота":
                 med['frequency'] = int(value)
-                med['times'] = []  # Сбрасываем время, нужно будет ввести заново
+                med['times'] = []
                 user_data['frequency'] = med['frequency']
                 user_data['times'] = []
                 user_data['time_index'] = 0
@@ -503,9 +512,9 @@ async def edit_field_value(update: Update, context):
                     f"Порог предупреждения обновлён на {value}.",
                     reply_markup=main_menu()
                 )
-    print(f"After update - Medicines in DB: {db['medicines']}")  # Отладка: база после изменений
-    save_db(db)  # Сохраняем изменения в базе данных
-    print("Saved DB after update")  # Отладка: подтверждение сохранения
+    print(f"After update - Medicines in DB: {db['medicines']}")
+    save_db(db)
+    print("Saved DB after update")
     user_data.clear()
     context.user_data.clear()
     return ConversationHandler.END
@@ -527,16 +536,14 @@ async def edit_time(update: Update, context):
             reply_markup=back_menu()
         )
         return EDIT_TIME
-    # Сохраняем новое время
+
     db = load_db()
     for med in db['medicines']:
         if med['name'] == user_data['med_name']:
-            # Удаляем старые уведомления
             for job in context.job_queue.jobs():
                 if med['name'] in job.name:
                     job.schedule_removal()
             med['times'] = user_data['times']
-            # Планируем новые уведомления
             schedule_notifications(context.job_queue, med['name'], med['times'])
     save_db(db)
     await update.message.reply_text(
@@ -579,14 +586,14 @@ async def edit_add_stock(update: Update, context):
         if add_stock < 0:
             raise ValueError
         db = load_db()
-        print(f"Before adding stock - Medicines in DB: {db['medicines']}")  # Отладка
+        print(f"Before adding stock - Medicines in DB: {db['medicines']}")
         for med in db['medicines']:
             if med['name'] == user_data['med_name']:
                 old_stock = med['stock']
                 med['stock'] += add_stock
-                print(f"Added {add_stock} to stock for {med['name']}. New stock: {med['stock']}")  # Отладка
+                print(f"Added {add_stock} to stock for {med['name']}. New stock: {med['stock']}")
                 break
-        print(f"After adding stock - Medicines in DB: {db['medicines']}")  # Отладка
+        print(f"After adding stock - Medicines in DB: {db['medicines']}")
         save_db(db)
         await update.message.reply_text(
             f"Добавлено {add_stock} таблеток. Новый остаток: {med['stock']}.",
@@ -607,7 +614,6 @@ async def edit_add_stock(update: Update, context):
 def schedule_notifications(job_queue, med_name, times):
     for time_str in times:
         hour, minute = map(int, time_str.split(':'))
-        # Планируем ежедневное уведомление
         job_queue.run_daily(
             callback=send_reminder,
             time=time(hour=hour, minute=minute, tzinfo=MOSCOW_TZ),
@@ -622,13 +628,11 @@ async def send_reminder(context):
     db = load_db()
     for med in db['medicines']:
         if med['name'] == med_name:
-            # Отправляем напоминание
             await context.bot.send_message(
                 chat_id=USER_ID,
                 text=f"Пора принять {med_name}! Дозировка: {med['dose']} таблетка.",
                 reply_markup=confirm_menu(med_name)
             )
-            # Проверяем остаток
             if med['stock'] <= med['warning']:
                 await context.bot.send_message(
                     chat_id=USER_ID,
@@ -642,7 +646,7 @@ async def confirm_medicine(update: Update, context):
     query = update.callback_query
     await query.answer()
     med_name = query.data.split('_')[1]
-    stock = update_stock(med_name, 1)  # Вычитаем 1 таблетку
+    stock = update_stock(med_name, 1)
     if stock is not None:
         await query.message.reply_text(f"Приём {med_name} подтверждён. Остаток: {stock}.")
     else:
@@ -653,68 +657,70 @@ async def confirm_medicine(update: Update, context):
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # Очищаем старые задачи в JobQueue перед добавлением новых
     if app.job_queue:
         for job in app.job_queue.jobs():
             job.schedule_removal()
 
-    # Загружаем существующие лекарства и планируем уведомления
     db = load_db()
     for med in db['medicines']:
         schedule_notifications(app.job_queue, med['name'], med['times'])
 
-    # Обработчики
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(Regex('^Просмотреть лекарства$'), view_medicines))
     app.add_handler(CallbackQueryHandler(confirm_medicine, pattern='^confirm_'))
 
-    # ConversationHandler для добавления лекарства
     add_med_handler = ConversationHandler(
         entry_points=[MessageHandler(Regex('^Добавить лекарство$'), add_medicine)],
         states={
-            ADD_NAME: [MessageHandler(Text() & ~Regex('^(/start|/help|Назад|В главное меню)\s*$'), add_name)],
-            ADD_FREQUENCY: [MessageHandler(Text() & ~Regex('^(/start|/help|Назад|В главное меню)\s*$'), add_frequency)],
-            ADD_TIME: [MessageHandler(Text() & ~Regex('^(/start|/help|Назад|В главное меню)\s*$'), add_time)],
-            ADD_STOCK: [MessageHandler(Text() & ~Regex('^(/start|/help|Назад|В главное меню)\s*$'), add_stock)],
-            ADD_WARNING: [MessageHandler(Text() & ~Regex('^(/start|/help|Назад|В главное меню)\s*$'), add_warning)],
+            ADD_NAME: [MessageHandler(Text() & ~Regex('(?i)^(/start|/help|Назад|В главное меню)\s*$'), add_name)],
+            ADD_FREQUENCY: [
+                MessageHandler(Text() & ~Regex('(?i)^(/start|/help|Назад|В главное меню)\s*$'), add_frequency)],
+            ADD_TIME: [MessageHandler(Text() & ~Regex('(?i)^(/start|/help|Назад|В главное меню)\s*$'), add_time)],
+            ADD_STOCK: [MessageHandler(Text() & ~Regex('(?i)^(/start|/help|Назад|В главное меню)\s*$'), add_stock)],
+            ADD_WARNING: [MessageHandler(Text() & ~Regex('(?i)^(/start|/help|Назад|В главное меню)\s*$'), add_warning)],
         },
-        fallbacks=[MessageHandler(Regex('^(Назад|В главное меню)\s*$'), handle_navigation)],
+        fallbacks=[
+            MessageHandler(Regex('(?i)^(Назад|В главное меню)\s*$'), handle_navigation)
+        ],
         allow_reentry=True
     )
     app.add_handler(add_med_handler)
 
-    # ConversationHandler для удаления лекарства
     delete_med_handler = ConversationHandler(
         entry_points=[MessageHandler(Regex('^Удалить лекарство$'), delete_medicine)],
         states={
             DELETE_MED: [
-                MessageHandler(Text() & ~Regex('^(/start|/help|Назад|В главное меню)\s*$'), delete_medicine_confirm)],
+                MessageHandler(Text() & ~Regex('(?i)^(/start|/help|Назад|В главное меню)\s*$'),
+                               delete_medicine_confirm)],
         },
-        fallbacks=[MessageHandler(Regex('^(Назад|В главное меню)\s*$'), handle_navigation)],
+        fallbacks=[
+            MessageHandler(Regex('(?i)^(Назад|В главное меню)\s*$'), handle_navigation)
+        ],
         allow_reentry=True
     )
     app.add_handler(delete_med_handler)
 
-    # ConversationHandler для изменения лекарства
     edit_med_handler = ConversationHandler(
         entry_points=[MessageHandler(Regex('^Изменить лекарство$'), edit_medicine)],
         states={
             EDIT_MED: [
-                MessageHandler(Text() & ~Regex('^(/start|/help|Назад|В главное меню)\s*$'), edit_medicine_field)],
-            EDIT_FIELD: [MessageHandler(Text() & ~Regex('^(/start|/help|Назад|В главное меню)\s*$'), edit_field)],
+                MessageHandler(Text() & ~Regex('(?i)^(/start|/help|Назад|В главное меню)\s*$'), edit_medicine_field)],
+            EDIT_FIELD: [MessageHandler(Text() & ~Regex('(?i)^(/start|/help|Назад|В главное меню)\s*$'), edit_field)],
             EDIT_NAME_VALUE: [
-                MessageHandler(Text() & ~Regex('^(/start|/help|Назад|В главное меню)\s*$'), edit_name_value)],
-            EDIT_TIME: [MessageHandler(Text() & ~Regex('^(/start|/help|Назад|В главное меню)\s*$'), edit_time)],
-            EDIT_STOCK: [MessageHandler(Text() & ~Regex('^(/start|/help|Назад|В главное меню)\s*$'), edit_stock_value)],
+                MessageHandler(Text() & ~Regex('(?i)^(/start|/help|Назад|В главное меню)\s*$'), edit_name_value)],
+            EDIT_TIME: [MessageHandler(Text() & ~Regex('(?i)^(/start|/help|Назад|В главное меню)\s*$'), edit_time)],
+            EDIT_STOCK: [
+                MessageHandler(Text() & ~Regex('(?i)^(/start|/help|Назад|В главное меню)\s*$'), edit_stock_value)],
             EDIT_ADD_STOCK: [
-                MessageHandler(Text() & ~Regex('^(/start|/help|Назад|В главное меню)\s*$'), edit_add_stock)],
+                MessageHandler(Text() & ~Regex('(?i)^(/start|/help|Назад|В главное меню)\s*$'), edit_add_stock)],
         },
-        fallbacks=[MessageHandler(Regex('^(Назад|В главное меню)\s*$'), handle_navigation)],
+        fallbacks=[
+            MessageHandler(Regex('(?i)^(Назад|В главное меню)\s*$'), handle_navigation)
+        ],
         allow_reentry=True
     )
     app.add_handler(edit_med_handler)
 
-    # Запускаем бота
     app.run_polling()
 
 
