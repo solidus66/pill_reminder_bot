@@ -5,8 +5,8 @@ def main_menu():
     keyboard = [
         ['Добавить лекарство'],
         ['Просмотреть лекарства'],
-        ['Удалить лекарство'],
         ['Изменить лекарство'],
+        ['Удалить лекарство']
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
